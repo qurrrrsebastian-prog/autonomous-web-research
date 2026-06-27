@@ -7,3 +7,10 @@ env/
 .DS_Store
 .env
 *.csv
+
+# Runtime SQLite database
+*.db
+app.db
+
+# Streamlit secrets
+.streamlit/secrets.toml

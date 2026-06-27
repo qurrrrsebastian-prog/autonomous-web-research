@@ -20,16 +20,22 @@ import urllib.parse
 from datetime import datetime
 
 import streamlit as st
-from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
 from groq import Groq
+
+import database as db
+from security import sanitize_input
+from ui_components import (PRIMARY, render_footer, render_header,
+                           render_job_card, score_badge_html)
 
 st.set_page_config(
     page_title="Autonomous Job Research Agent",
     layout="wide",
     page_icon="🔍",
 )
+
+db.init_db()
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +177,7 @@ def search_duckduckgo(queries: list[str], max_results: int = 5) -> list[dict]:
     """
     results: list[dict] = []
     try:
+        from duckduckgo_search import DDGS  # lazy import keeps UI loadable
         for index, query in enumerate(queries):
             try:
                 # region="id-id" biases toward Indonesian job results;
@@ -604,29 +611,94 @@ def jobs_to_csv(jobs: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # SECTION E — UI
 # ---------------------------------------------------------------------------
-def main() -> None:
-    """Render the Streamlit UI and orchestrate the agent workflow.
+def _run_search(groq_key, role, location, level):
+    """Run the full search workflow, persist it, and store results in state."""
+    import time as _t
+    start = _t.perf_counter()
+    progress = st.progress(0, text="Generating queries...")
+    debug = {"api_status": "unknown"}
+    try:
+        client = get_groq_client(groq_key)
+        progress.progress(25, text="Generating queries...")
+        queries = generate_queries(client, role, location, level)
+        progress.progress(50, text="Searching web...")
+        results = search_duckduckgo(queries)
+        progress.progress(75, text="Analyzing jobs...")
+        snippets = scrape_snippets(results)
+        jobs = analyze_jobs(client, snippets, role)
+        demo_mode = False
+        if len(results) < 3 or not jobs:
+            jobs = get_demo_jobs()
+            demo_mode = True
+        progress.progress(100, text="Finalizing...")
+        elapsed = _t.perf_counter() - start
+        st.session_state.jobs = jobs
+        st.session_state.searched = True
+        st.session_state.queries = queries
+        st.session_state.demo_mode = demo_mode
+        sid = db.add_search(role, location, level, ", ".join(queries),
+                            len(results), demo_mode, elapsed)
+        st.session_state.current_search_id = sid
+        db.add_log("search", f"{role} @ {location} ({level}), demo={demo_mode}")
+        debug.update({"api_status": "ok", "generated_queries": queries,
+                      "raw_result_count": len(results), "snippet_count": len(snippets),
+                      "demo_mode": demo_mode})
+        st.session_state.debug = debug
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Search workflow failed: {exc}")
+        debug["api_status"] = f"error: {exc}"
+        st.session_state.debug = debug
+    finally:
+        progress.empty()
 
-    Returns:
-        None.
-    """
-    # ----- Sidebar -----
+
+def _render_job_detail(job, level, idx):
+    """Render the expandable detail + apply buttons + save control for a job."""
+    title = job.get("job_title", "Unknown")
+    company = job.get("company_name", "Unknown")
+    location_str = job.get("location", "N/A")
+    with st.expander(f"{company} · {title} — {job.get('skill_match_score', 0)}% match"):
+        st.markdown(f"📍 **{location_str}**")
+        st.markdown(f"💰 {job.get('salary_hint', 'N/A')}")
+        st.markdown(f"📝 **Requirements:** {job.get('requirements_summary', 'N/A')}")
+        st.markdown(f"✅ **Matching:** {', '.join(job.get('matching_skills', []))}")
+        st.markdown(f"⚠️ **Missing:** {', '.join(job.get('missing_skills', []))}")
+        st.markdown(f"🎯 **Recommendation:** {job.get('recommendation', 'N/A')}")
+        if st.button("🔖 Save job", key=f"save_{idx}_{company}_{title}"):
+            db.save_job(job, st.session_state.get("current_search_id"))
+            st.toast("Saved to bookmarks", icon="🔖")
+        st.markdown("🔗 **APPLY ON:**")
+        linkedin_url = job.get("apply_url") or generate_linkedin_url(
+            title, company, location_str, level)
+        portal_links = [
+            ("LinkedIn 🔗", linkedin_url),
+            ("JobStreet 🔗", generate_jobstreet_url(title, location_str)),
+            ("Kalibrr 🔗", generate_kalibrr_url(title)),
+            ("Glints 🔗", generate_glints_url(title)),
+        ]
+        btn_cols = st.columns(4)
+        for col, (label, url) in zip(btn_cols, portal_links):
+            with col:
+                if url and url != "#":
+                    st.link_button(label, url, use_container_width=True)
+                else:
+                    st.button(label, disabled=True, use_container_width=True,
+                              key=f"{company}_{title}_{label}_{idx}")
+
+
+def main() -> None:
+    """Render the Streamlit UI and orchestrate the agent workflow."""
     with st.sidebar:
         st.header("🔐 API Key")
-        groq_key = st.text_input(
-            "Groq API Key",
-            type="password",
-            value=os.environ.get("GROQ_API_KEY", ""),
-        )
+        groq_key = st.text_input("Groq API Key", type="password",
+                                 value=os.environ.get("GROQ_API_KEY", ""))
         st.header("👤 Skill Profile")
         st.markdown(
             "**Avatar Putra Sigit**\n"
             "- 18 y/o | Sistem Informasi Budi Luhur\n"
             "- 15 Production Projects\n"
             "- Python, Pandas, Streamlit, LangChain, Groq, RAG, ChromaDB, "
-            "Flask, SQLite, Google Ads, SEO, NLP, Data Viz"
-        )
-
+            "Flask, SQLite, Google Ads, SEO, NLP, Data Viz")
         st.divider()
         st.header("🚀 Cari di Portal")
         st.link_button("🔍 LinkedIn Jobs", "https://www.linkedin.com/jobs/")
@@ -634,217 +706,198 @@ def main() -> None:
         st.link_button("💼 Kalibrr", "https://www.kalibrr.com/")
         st.link_button("🌟 Glints", "https://glints.com/id/")
 
-        st.divider()
-        st.caption(
-            "💡 Tip: Hasil di atas sudah include link langsung ke tiap "
-            "portal per lowongan."
-        )
+    render_header("🔍 Autonomous Job Research Agent",
+                  "AI searches vacancies & matches them to your skills · v2.0 Violet Career")
+    if not groq_key:
+        st.info("ℹ️ GROQ_API_KEY not set — live search is disabled. Saved jobs, "
+                "history and analytics remain available.")
 
-    # ----- Main -----
-    st.title("🔍 Autonomous Job Research Agent")
-    st.caption("AI cari lowongan & cocokkan sama skill kamu")
+    tab_search, tab_saved, tab_compare, tab_analytics, tab_history = st.tabs(
+        ["🔍 Search", "🔖 Saved Jobs", "⚖️ Compare", "📊 Analytics", "🕑 History"])
 
-    col1, col2 = st.columns([1, 2])
+    prefill = st.session_state.get("prefill", {})
 
-    with col1:
-        role = st.text_input("Job Role", value="Data Analyst")
-        location = st.text_input("Location", value="Jakarta")
-        level = st.selectbox(
-            "Experience Level",
-            ["Internship", "Entry Level", "Junior", "Mid Level", "Senior"],
-        )
-
-        search_clicked = st.button(
-            "🔍 Cari Lowongan", type="primary", use_container_width=True
-        )
-        clear_clicked = st.button("🧹 Clear Results", use_container_width=True)
-
-        if clear_clicked:
-            for key in ("jobs", "searched", "queries", "demo_mode", "debug"):
+    # ----- Search tab ----------------------------------------------------- #
+    with tab_search:
+        sc = st.columns([1, 1, 1, 1])
+        role = sc[0].text_input("Job Role", value=prefill.get("role", "Data Analyst"))
+        location = sc[1].text_input("Location", value=prefill.get("location", "Jakarta"))
+        levels = ["Internship", "Entry Level", "Junior", "Mid Level", "Senior"]
+        lvl_default = prefill.get("level", "Internship")
+        level = sc[2].selectbox("Experience Level", levels,
+                                index=levels.index(lvl_default) if lvl_default in levels else 0)
+        sc[3].write("")
+        sc[3].write("")
+        go = sc[3].button("🔍 Cari", type="primary", use_container_width=True,
+                          disabled=not groq_key)
+        if st.button("🧹 Clear Results"):
+            for key in ("jobs", "searched", "queries", "demo_mode", "debug",
+                        "current_search_id"):
                 st.session_state.pop(key, None)
             st.rerun()
+        if go:
+            _run_search(groq_key, sanitize_input(role, 100),
+                        sanitize_input(location, 100), level)
 
-        if search_clicked:
-            if not groq_key:
-                st.error("Please enter your Groq API key in the sidebar.")
-            else:
-                progress = st.progress(0, text="Generating queries...")
-                debug: dict = {"api_status": "unknown"}
-                try:
-                    client = get_groq_client(groq_key)
-
-                    progress.progress(25, text="Generating queries...")
-                    queries = generate_queries(client, role, location, level)
-
-                    progress.progress(50, text="Searching web...")
-                    results = search_duckduckgo(queries)
-
-                    progress.progress(75, text="Analyzing jobs...")
-                    snippets = scrape_snippets(results)
-                    jobs = analyze_jobs(client, snippets, role)
-
-                    # Auto-fallback: too few live results or empty analysis
-                    # means we serve curated demo data instead of a blank UI.
-                    demo_mode = False
-                    if len(results) < 3 or not jobs:
-                        jobs = get_demo_jobs()
-                        demo_mode = True
-
-                    progress.progress(100, text="Finalizing...")
-                    st.session_state.jobs = jobs
-                    st.session_state.searched = True
-                    st.session_state.queries = queries
-                    st.session_state.demo_mode = demo_mode
-                    debug.update(
-                        {
-                            "api_status": "ok",
-                            "generated_queries": queries,
-                            "raw_result_count": len(results),
-                            "snippet_count": len(snippets),
-                            "demo_mode": demo_mode,
-                        }
-                    )
-                    st.session_state.debug = debug
-                except Exception as exc:  # noqa: BLE001 - report and continue
-                    st.error(f"Search workflow failed: {exc}")
-                    debug["api_status"] = f"error: {exc}"
-                    st.session_state.debug = debug
-                finally:
-                    progress.empty()
-
-    with col2:
         if st.session_state.get("searched"):
             jobs = st.session_state.get("jobs", [])
-
             if st.session_state.get("demo_mode"):
-                st.info(
-                    "📡 Web search limited — showing curated demo data with "
-                    "real apply links. Click 'Cari di LinkedIn' to apply."
-                )
+                st.info("📡 Web search limited — showing curated demo data with real "
+                        "apply links.")
             elif jobs:
                 st.success(f"✅ Found {len(jobs)} jobs from live web search!")
-
             if not jobs:
                 st.info("No jobs found. Try a broader role or location.")
             else:
-                strong = sum(
-                    1 for j in jobs if j.get("skill_match_score", 0) > 80
-                )
-                avg = (
-                    sum(j.get("skill_match_score", 0) for j in jobs) / len(jobs)
-                    if jobs
-                    else 0
-                )
-
-                cols = st.columns(3)
-                cols[0].metric("Total Jobs", len(jobs))
-                cols[1].metric("Strong Matches (>80)", strong)
-                cols[2].metric("Avg Match Score", f"{avg:.0f}")
-
+                strong = sum(1 for j in jobs if j.get("skill_match_score", 0) > 80)
+                avg = sum(j.get("skill_match_score", 0) for j in jobs) / len(jobs)
+                mcols = st.columns(3)
+                mcols[0].metric("Total Jobs", len(jobs))
+                mcols[1].metric("Strong Matches (>80)", strong)
+                mcols[2].metric("Avg Match Score", f"{avg:.0f}")
                 st.divider()
 
-                st.dataframe(
-                    [
-                        {
-                            "Score": score_badge(j.get("skill_match_score", 0)),
-                            **{
-                                k: v
-                                for k, v in j.items()
-                                if k
-                                not in ("requirements_summary", "skill_match_score")
-                            },
-                        }
-                        for j in jobs
-                    ],
-                    use_container_width=True,
-                )
+                # Advanced filters.
+                fc = st.columns([2, 2, 2])
+                min_score = fc[0].slider("Min match score", 0, 100, 0, 5)
+                companies = ["All"] + sorted({j.get("company_name", "?") for j in jobs})
+                company_f = fc[1].selectbox("Company", companies)
+                salary_f = fc[2].text_input("Salary contains")
+                filtered = [
+                    j for j in jobs
+                    if j.get("skill_match_score", 0) >= min_score
+                    and (company_f == "All" or j.get("company_name") == company_f)
+                    and (not salary_f or salary_f.lower() in
+                         str(j.get("salary_hint", "")).lower())]
+                st.caption(f"{len(filtered)} of {len(jobs)} jobs match filters.")
 
-                for job in jobs:
-                    badge = score_badge(job.get("skill_match_score", 0))
-                    title = job.get("job_title", "Unknown")
-                    company = job.get("company_name", "Unknown")
-                    location_str = job.get("location", "N/A")
-                    header = f"{badge}  —  **{company}** · {title}"
-                    with st.expander(header):
-                        st.markdown(f"📍 **{location_str}**")
-                        st.markdown(
-                            f"💰 {job.get('salary_hint', 'N/A')}"
-                        )
-                        st.markdown(
-                            f"📝 **Requirements:** "
-                            f"{job.get('requirements_summary', 'N/A')}"
-                        )
-                        st.markdown(
-                            f"✅ **Matching:** "
-                            f"{', '.join(job.get('matching_skills', []))}"
-                        )
-                        st.markdown(
-                            f"⚠️ **Missing:** "
-                            f"{', '.join(job.get('missing_skills', []))}"
-                        )
-                        st.markdown(
-                            f"🎯 **Recommendation:** "
-                            f"{job.get('recommendation', 'N/A')}"
-                        )
+                # Pagination (cards grid, 2 columns, 6 per page).
+                page_size = 6
+                pages = max(1, (len(filtered) - 1) // page_size + 1)
+                page = st.number_input(f"Page (1–{pages})", 1, pages, 1)
+                page_jobs = filtered[(page - 1) * page_size: page * page_size]
+                grid = st.columns(2)
+                for i, job in enumerate(page_jobs):
+                    with grid[i % 2]:
+                        render_job_card(job)
+                        _render_job_detail(job, level, (page - 1) * page_size + i)
 
-                        st.markdown("🔗 **APPLY ON:**")
-                        # Build per-portal direct search URLs. The stored
-                        # apply_url (often a LinkedIn search) is preferred for
-                        # the LinkedIn button when present.
-                        linkedin_url = job.get("apply_url") or generate_linkedin_url(
-                            title, company, location_str, level
-                        )
-                        portal_links = [
-                            ("LinkedIn 🔗", linkedin_url),
-                            (
-                                "JobStreet 🔗",
-                                generate_jobstreet_url(title, location_str),
-                            ),
-                            ("Kalibrr 🔗", generate_kalibrr_url(title)),
-                            ("Glints 🔗", generate_glints_url(title)),
-                        ]
-                        btn_cols = st.columns(4)
-                        for col, (label, url) in zip(btn_cols, portal_links):
-                            with col:
-                                if url and url != "#":
-                                    st.link_button(
-                                        label, url, use_container_width=True
-                                    )
-                                else:
-                                    st.button(
-                                        label,
-                                        disabled=True,
-                                        use_container_width=True,
-                                        key=f"{company}_{title}_{label}",
-                                    )
-
-                    st.divider()
-
+                st.divider()
                 csv = jobs_to_csv(jobs)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                st.download_button(
-                    "⬇️ Download CSV",
-                    csv,
-                    f"job_research_{timestamp}.csv",
-                    "text/csv",
-                    disabled=not jobs,
-                )
+                st.download_button("⬇️ Download CSV", csv,
+                                   f"job_research_{timestamp}.csv", "text/csv")
 
-            # ----- Debug Info (collapsible, for troubleshooting) -----
             with st.expander("🛠️ Debug Info"):
                 debug = st.session_state.get("debug", {})
                 st.markdown(f"**API Status:** {debug.get('api_status', 'N/A')}")
-                st.markdown(
-                    f"**Raw Result Count:** {debug.get('raw_result_count', 'N/A')}"
-                )
-                st.markdown(
-                    f"**Snippet Count:** {debug.get('snippet_count', 'N/A')}"
-                )
-                st.markdown(
-                    f"**Demo Mode:** {debug.get('demo_mode', 'N/A')}"
-                )
-                st.markdown("**Generated Queries:**")
+                st.markdown(f"**Raw Result Count:** {debug.get('raw_result_count', 'N/A')}")
+                st.markdown(f"**Demo Mode:** {debug.get('demo_mode', 'N/A')}")
                 st.json(debug.get("generated_queries", []))
+
+    # ----- Saved Jobs tab ------------------------------------------------- #
+    with tab_saved:
+        st.subheader("🔖 Saved Jobs")
+        saved = db.get_saved_jobs()
+        if saved.empty:
+            st.caption("No saved jobs yet. Bookmark jobs from the Search tab.")
+        else:
+            st.metric("Bookmarked", len(saved))
+            for _, s in saved.iterrows():
+                with st.expander(f"{s['company_name']} · {s['job_title']} — "
+                                 f"{s['skill_match_score']}%"):
+                    st.markdown(f"📍 {s['location']} · 💰 {s['salary_hint']}")
+                    st.markdown(f"🎯 {s['recommendation']}")
+                    if st.button("🗑️ Remove", key=f"rm_{s['id']}"):
+                        db.delete_saved_job(int(s["id"]))
+                        st.rerun()
+            st.download_button("⬇️ Export saved (CSV)",
+                               saved.to_csv(index=False).encode("utf-8"),
+                               file_name="saved_jobs.csv", mime="text/csv")
+
+    # ----- Compare tab ---------------------------------------------------- #
+    with tab_compare:
+        st.subheader("⚖️ Job Comparison")
+        saved = db.get_saved_jobs()
+        if saved.empty:
+            st.caption("Save at least 2 jobs to compare them side by side.")
+        else:
+            labels = {int(r["id"]): f"{r['company_name']} · {r['job_title']}"
+                      for _, r in saved.iterrows()}
+            chosen = st.multiselect("Pick 2–3 jobs", list(labels.keys()),
+                                    format_func=lambda i: labels[i], max_selections=3)
+            if len(chosen) >= 2:
+                cols = st.columns(len(chosen))
+                for col, jid in zip(cols, chosen):
+                    row = saved[saved["id"] == jid].iloc[0]
+                    with col:
+                        st.markdown(f"#### {row['company_name']}")
+                        st.markdown(f"**{row['job_title']}**")
+                        st.metric("Match", f"{row['skill_match_score']}%")
+                        st.markdown(f"📍 {row['location']}")
+                        st.markdown(f"💰 {row['salary_hint']}")
+                        st.markdown(f"🎯 {row['recommendation']}")
+            else:
+                st.info("Select at least 2 jobs.")
+
+    # ----- Analytics tab -------------------------------------------------- #
+    with tab_analytics:
+        st.subheader("📊 Search Analytics")
+        searches = db.get_searches()
+        saved = db.get_saved_jobs()
+        if searches.empty:
+            st.caption("Run a search to populate analytics.")
+        else:
+            import pandas as _pd
+            a1, a2 = st.columns(2)
+            with a1:
+                by_role = searches["role"].value_counts().reset_index()
+                by_role.columns = ["role", "count"]
+                st.bar_chart(by_role.set_index("role"))
+                st.caption("Searches by role")
+            with a2:
+                demo_counts = searches["demo_mode"].map(
+                    {0: "Live", 1: "Demo"}).value_counts().reset_index()
+                demo_counts.columns = ["mode", "count"]
+                st.bar_chart(demo_counts.set_index("mode"))
+                st.caption("Live vs demo searches")
+            st.metric("Total searches", len(searches))
+            st.metric("Avg execution time",
+                      f"{searches['execution_time_seconds'].mean():.1f}s")
+            if not saved.empty:
+                st.markdown("##### Saved-job match-score distribution")
+                st.bar_chart(saved["skill_match_score"])
+
+    # ----- History tab ---------------------------------------------------- #
+    with tab_history:
+        st.subheader("🕑 Search History")
+        searches = db.get_searches()
+        if searches.empty:
+            st.caption("No searches yet.")
+        else:
+            hc1, hc2 = st.columns([3, 1])
+            hc1.metric("Searches", len(searches))
+            if hc2.button("🗑️ Clear history", use_container_width=True):
+                db.clear_searches()
+                st.rerun()
+            st.dataframe(
+                searches[["timestamp", "role", "location", "level",
+                          "result_count", "demo_mode", "execution_time_seconds"]],
+                use_container_width=True, hide_index=True)
+            sel = st.selectbox(
+                "Re-run a past search", searches["id"].tolist(),
+                format_func=lambda i: (
+                    f"{searches.loc[searches['id']==i,'role'].iloc[0]} @ "
+                    f"{searches.loc[searches['id']==i,'location'].iloc[0]}"))
+            if st.button("↻ Load params into Search tab"):
+                row = searches[searches["id"] == sel].iloc[0]
+                st.session_state.prefill = {"role": row["role"],
+                                            "location": row["location"],
+                                            "level": row["level"]}
+                st.toast("Loaded — go to the Search tab and click Cari.", icon="↻")
+                st.rerun()
+
+    render_footer()
 
 
 if __name__ == "__main__":

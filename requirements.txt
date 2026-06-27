@@ -3,3 +3,4 @@ duckduckgo-search
 beautifulsoup4
 requests
 groq
+pandas
