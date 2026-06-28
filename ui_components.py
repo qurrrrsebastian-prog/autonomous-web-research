@@ -6,6 +6,18 @@ import streamlit as st
 PRIMARY = "#7C3AED"
 SECONDARY = "#A78BFA"
 
+PORTFOLIO_LINKS = [
+    ("#11 RAG Q&A", "https://github.com/qurrrrsebastian-prog/rag-document-qa"),
+    ("#12 SQL Agent", "https://github.com/qurrrrsebastian-prog/text-to-sql-agent"),
+    ("#13 YouTube", "https://github.com/qurrrrsebastian-prog/youtube-summarizer"),
+    ("#14 Leads", "https://github.com/qurrrrsebastian-prog/lead-qualification-bot"),
+    ("#15 Research", "https://github.com/qurrrrsebastian-prog/multi-agent-research"),
+    ("#16 Jobs", "https://github.com/qurrrrsebastian-prog/autonomous-web-research"),
+    ("#17 Email", "https://github.com/qurrrrsebastian-prog/ai-email-auto-responder"),
+    ("#18 IoT", "https://github.com/qurrrrsebastian-prog/smart-water-iot-dashboard"),
+    ("#19 RBAC", "https://github.com/qurrrrsebastian-prog/enterprise-rag-rbac"),
+]
+
 
 def render_header(title: str, subtitle: str, color: str = PRIMARY) -> None:
     """Render a gradient page header."""
@@ -22,15 +34,28 @@ def render_header(title: str, subtitle: str, color: str = PRIMARY) -> None:
 
 
 def render_footer() -> None:
-    """Render the standard footer."""
+    """Render the portfolio footer with navigation and social links."""
     st.markdown("---")
+    active = "#16 Jobs"
+    nav_html = ""
+    for label, url in PORTFOLIO_LINKS:
+        is_active = label == active
+        bg = f"{PRIMARY}33" if is_active else "#1C1F26"
+        border = PRIMARY if is_active else "#334155"
+        text = PRIMARY if is_active else "#94A3B8"
+        weight = "600" if is_active else "400"
+        nav_html += f'<a href="{url}" target="_blank" style="text-decoration:none;margin:3px;"><span style="background:{bg};border:1px solid {border};border-radius:6px;padding:3px 10px;font-size:11px;color:{text};font-weight:{weight};">{label}</span></a>'
     st.markdown(
-        """
-    <div style="text-align: center; color: #64748B; font-size: 12px; padding: 10px;">
-        <p>Built with ❤️ by <a href="https://github.com/qurrrrsebastian-prog" target="_blank">Avatar Putra Sigit</a>
-        | Founder @AVA.Group | © 2026</p>
-    </div>
-    """,
+        f"""<div style="text-align:center;margin-bottom:12px;">
+            <p style="color:#94A3B8;font-size:11px;margin-bottom:8px;">🚀 PORTFOLIO NAVIGATION</p>
+            <div style="display:flex;flex-wrap:wrap;justify-content:center;">{nav_html}</div>
+        </div>
+        <div style="text-align:center;color:#64748B;font-size:12px;padding:10px;">
+            <p><a href="https://github.com/qurrrrsebastian-prog" target="_blank" style="color:{PRIMARY};text-decoration:none;">GitHub</a> · 
+            <a href="https://linkedin.com/in/avatar-putra-sigit" target="_blank" style="color:{PRIMARY};text-decoration:none;">LinkedIn</a> · 
+            <a href="mailto:putraavaar@gmail.com" style="color:{PRIMARY};text-decoration:none;">Email</a></p>
+            <p>Built with ❤️ by Avatar Putra Sigit | Founder @AVA.Group | © 2026</p>
+        </div>""",
         unsafe_allow_html=True,
     )
 
