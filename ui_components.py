@@ -52,7 +52,7 @@ def render_footer() -> None:
         </div>
         <div style="text-align:center;color:#64748B;font-size:12px;padding:10px;">
             <p><a href="https://github.com/qurrrrsebastian-prog" target="_blank" style="color:{PRIMARY};text-decoration:none;">GitHub</a> · 
-            <a href="https://linkedin.com/in/avatar-putra-sigit" target="_blank" style="color:{PRIMARY};text-decoration:none;">LinkedIn</a> · 
+            <a href="https://www.linkedin.com/in/avatarputrasigit/" target="_blank" style="color:{PRIMARY};text-decoration:none;">LinkedIn</a> · 
             <a href="mailto:putraavaar@gmail.com" style="color:{PRIMARY};text-decoration:none;">Email</a></p>
             <p>Built with ❤️ by Avatar Putra Sigit | Founder @AVA.Group | © 2026</p>
         </div>""",
