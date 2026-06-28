@@ -7,15 +7,15 @@ PRIMARY = "#7C3AED"
 SECONDARY = "#A78BFA"
 
 PORTFOLIO_LINKS = [
-    ("#11 RAG Q&A", "https://github.com/qurrrrsebastian-prog/rag-document-qa"),
-    ("#12 SQL Agent", "https://github.com/qurrrrsebastian-prog/text-to-sql-agent"),
-    ("#13 YouTube", "https://github.com/qurrrrsebastian-prog/youtube-summarizer"),
-    ("#14 Leads", "https://github.com/qurrrrsebastian-prog/lead-qualification-bot"),
-    ("#15 Research", "https://github.com/qurrrrsebastian-prog/multi-agent-research"),
-    ("#16 Jobs", "https://github.com/qurrrrsebastian-prog/autonomous-web-research"),
-    ("#17 Email", "https://github.com/qurrrrsebastian-prog/ai-email-auto-responder"),
-    ("#18 IoT", "https://github.com/qurrrrsebastian-prog/smart-water-iot-dashboard"),
-    ("#19 RBAC", "https://github.com/qurrrrsebastian-prog/enterprise-rag-rbac"),
+    ("#11 RAG Q&A", "https://qurrrrsebastian-prog-rag-document-qa-app-m2sk1y.streamlit.app"),
+    ("#12 SQL Agent", "https://qurrrrsebastian-prog-text-to-sql-agent-app-coxf4n.streamlit.app"),
+    ("#13 YouTube", "https://qurrrrsebastian-prog-youtube-summarizer-app-dkimhb.streamlit.app"),
+    ("#14 Leads", "https://qurrrrsebastian-prog-lead-qualification-bot-app-ijiva5.streamlit.app"),
+    ("#15 Research", "https://qurrrrsebastian-prog-multi-agent-research-app-2shdkz.streamlit.app"),
+    ("#16 Jobs", "https://qurrrrsebastian-prog-autonomous-web-research-app-ocdfsh.streamlit.app"),
+    ("#17 Email", "https://qurrrrsebastian-prog-ai-email-auto-responder-app-uvopvk.streamlit.app"),
+    ("#18 IoT", "https://qurrrrsebastian-prog-smart-water-iot-dashboard-app-tzlyp0.streamlit.app"),
+    ("#19 RBAC", "https://qurrrrsebastian-prog-enterprise-rag-rbac-app-21foi1.streamlit.app"),
 ]
 
 
